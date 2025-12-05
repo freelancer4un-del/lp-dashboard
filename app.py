@@ -1,12 +1,12 @@
 """
-LP Dashboard v2.2 - Potential LP 모니터링 대시보드
+LP Dashboard v2.3 - Potential LP & IPO 모니터링 대시보드
 인프라프론티어자산운용(주)
 
-v2.2 개선사항:
-- IPO 캘린더 탭 추가 (수요예측, 청약일정, 상장일정)
-- 파일 기반 저장 방식 (CSV로 중간 저장)
-- 38커뮤니케이션 / ipostock.co.kr 데이터 스크래핑
-- IPO 펀드 운용자를 위한 기능 강화
+v2.3 개선사항:
+- 38커뮤니케이션 코드 제거 (파싱 오류)
+- IPOStock 전용으로 변경 (안정적인 데이터)
+- 공모청약일정, 수요예측일정, IPO캘린더 스크래핑
+- 연도/월 선택으로 미래 일정 조회 가능
 """
 
 import streamlit as st
@@ -23,8 +23,6 @@ st.set_page_config(
 
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import requests
 from bs4 import BeautifulSoup
@@ -72,7 +70,19 @@ st.markdown("""
     .metric-card:hover { border-color: #3498db; }
     .metric-title { color: #888888; font-size: 0.75rem; margin-bottom: 0.3rem; }
     .metric-value { color: #ffffff; font-size: 1.2rem; font-weight: 700; }
-    .metric-sub { color: #666; font-size: 0.7rem; margin-top: 0.2rem; }
+    
+    .ipo-card {
+        background: linear-gradient(145deg, #1a2a3a 0%, #16213e 100%);
+        border-radius: 10px;
+        padding: 1rem;
+        border: 1px solid #2980b9;
+        margin-bottom: 0.8rem;
+    }
+    .ipo-card:hover { border-color: #3498db; transform: translateY(-2px); transition: all 0.3s; }
+    .ipo-name { color: #3498db; font-size: 1rem; font-weight: 700; margin-bottom: 0.3rem; }
+    .ipo-detail { color: #bbb; font-size: 0.85rem; line-height: 1.6; }
+    .ipo-date { color: #f39c12; font-weight: 600; }
+    .ipo-price { color: #27ae60; font-weight: 600; }
     
     .company-card {
         background: linear-gradient(145deg, #16213e 0%, #1a1a2e 100%);
@@ -85,30 +95,18 @@ st.markdown("""
     .company-name { color: #ffffff; font-size: 0.95rem; font-weight: 700; margin-bottom: 0.2rem; }
     .company-info { color: #aaaaaa; font-size: 0.8rem; line-height: 1.4; }
     
-    .ipo-card {
-        background: linear-gradient(145deg, #1a2a3a 0%, #16213e 100%);
-        border-radius: 10px;
-        padding: 1rem;
-        border: 1px solid #2980b9;
-        margin-bottom: 0.8rem;
-    }
-    .ipo-card:hover { border-color: #3498db; transform: translateY(-2px); transition: all 0.3s; }
-    .ipo-name { color: #3498db; font-size: 1rem; font-weight: 700; margin-bottom: 0.3rem; }
-    .ipo-detail { color: #bbb; font-size: 0.85rem; line-height: 1.5; }
-    .ipo-date { color: #f39c12; font-weight: 600; }
-    .ipo-price { color: #27ae60; font-weight: 600; }
-    
     .status-badge {
         display: inline-block;
-        padding: 0.2rem 0.5rem;
+        padding: 0.2rem 0.6rem;
         border-radius: 12px;
-        font-size: 0.7rem;
+        font-size: 0.75rem;
         font-weight: 600;
+        margin-right: 0.5rem;
     }
-    .badge-forecast { background: #9b59b6; color: white; }
     .badge-subscription { background: #e74c3c; color: white; }
     .badge-listing { background: #27ae60; color: white; }
-    .badge-ir { background: #f39c12; color: white; }
+    .badge-forecast { background: #9b59b6; color: white; }
+    .badge-approval { background: #f39c12; color: white; }
     
     .info-box {
         background: rgba(52, 152, 219, 0.1);
@@ -119,221 +117,235 @@ st.markdown("""
         color: #87ceeb;
     }
     
-    .warning-box {
-        background: rgba(241, 196, 15, 0.1);
-        border-left: 4px solid #f1c40f;
-        padding: 0.8rem 1rem;
-        border-radius: 0 8px 8px 0;
-        margin: 0.5rem 0;
-        color: #f9e79f;
+    .calendar-event {
+        background: rgba(52, 152, 219, 0.2);
+        border-left: 3px solid #3498db;
+        padding: 0.5rem 0.8rem;
+        margin: 0.3rem 0;
+        border-radius: 0 6px 6px 0;
+        font-size: 0.85rem;
     }
-    
-    .calendar-day {
-        background: #1a1a2e;
-        border: 1px solid #2c3e50;
-        border-radius: 8px;
-        padding: 0.5rem;
-        min-height: 80px;
-        margin: 2px;
-    }
-    .calendar-day:hover { border-color: #3498db; }
-    .calendar-date { color: #888; font-size: 0.8rem; margin-bottom: 0.3rem; }
-    .calendar-event { 
-        font-size: 0.7rem; 
-        padding: 0.2rem 0.4rem; 
-        border-radius: 4px; 
-        margin: 2px 0;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
+    .calendar-event.forecast { border-left-color: #9b59b6; background: rgba(155, 89, 182, 0.2); }
+    .calendar-event.subscription { border-left-color: #e74c3c; background: rgba(231, 76, 60, 0.2); }
+    .calendar-event.listing { border-left-color: #27ae60; background: rgba(39, 174, 96, 0.2); }
 </style>
 """, unsafe_allow_html=True)
 
 # =============================================================================
-# IPO 데이터 스크래핑 함수
+# IPOStock 스크래핑 함수
 # =============================================================================
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_ipo_calendar_from_ipostock(year=2025, month=12):
-    """IPOStock에서 IPO 캘린더 데이터 스크래핑"""
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_ipo_subscription_schedule():
+    """IPOStock 공모청약일정 스크래핑"""
+    try:
+        url = 'http://www.ipostock.co.kr/sub03/ipo04.asp'
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(url, headers=headers, timeout=15)
+        response.encoding = 'euc-kr'
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        results = []
+        # 테이블 행 찾기
+        rows = soup.find_all('tr')
+        
+        for row in rows:
+            cells = row.find_all('td')
+            if len(cells) >= 10:
+                try:
+                    # 공모일정 (cells[1])
+                    date_cell = cells[1].get_text(strip=True)
+                    
+                    # 종목명 (cells[2])
+                    company_cell = cells[2]
+                    company_link = company_cell.find('a')
+                    company_name = company_link.get_text(strip=True) if company_link else company_cell.get_text(strip=True)
+                    
+                    # 빈 이름 건너뛰기
+                    if not company_name or company_name == '-':
+                        continue
+                    
+                    # 희망공모가 (cells[3])
+                    hope_price = cells[3].get_text(strip=True)
+                    
+                    # 공모가 (cells[4])
+                    offer_price = cells[4].get_text(strip=True)
+                    
+                    # 공모금액 (cells[5])
+                    offer_amount = cells[5].get_text(strip=True)
+                    
+                    # 환불일 (cells[6])
+                    refund_date = cells[6].get_text(strip=True)
+                    
+                    # 상장일 (cells[7])
+                    listing_date = cells[7].get_text(strip=True)
+                    
+                    # 경쟁률 (cells[8])
+                    competition = cells[8].get_text(strip=True)
+                    
+                    # 주간사 (cells[9])
+                    underwriter = cells[9].get_text(strip=True)
+                    
+                    results.append({
+                        'company': company_name,
+                        'subscription_date': date_cell,
+                        'hope_price': hope_price,
+                        'offer_price': offer_price,
+                        'offer_amount': offer_amount,
+                        'refund_date': refund_date,
+                        'listing_date': listing_date,
+                        'competition': competition,
+                        'underwriter': underwriter
+                    })
+                except Exception as e:
+                    continue
+        
+        return results
+    except Exception as e:
+        return []
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_ipo_forecast_schedule():
+    """IPOStock 수요예측일정 스크래핑"""
+    try:
+        url = 'http://www.ipostock.co.kr/sub03/ipo02.asp'
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(url, headers=headers, timeout=15)
+        response.encoding = 'euc-kr'
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        results = []
+        rows = soup.find_all('tr')
+        
+        for row in rows:
+            cells = row.find_all('td')
+            if len(cells) >= 6:
+                try:
+                    # 수요예측일 (cells[1])
+                    date_cell = cells[1].get_text(strip=True)
+                    
+                    # 종목명 (cells[2])
+                    company_cell = cells[2]
+                    company_link = company_cell.find('a')
+                    company_name = company_link.get_text(strip=True) if company_link else company_cell.get_text(strip=True)
+                    
+                    if not company_name or company_name == '-':
+                        continue
+                    
+                    # 희망공모가 (cells[3])
+                    hope_price = cells[3].get_text(strip=True) if len(cells) > 3 else ''
+                    
+                    # 주간사 (cells[4] or cells[5])
+                    underwriter = cells[4].get_text(strip=True) if len(cells) > 4 else ''
+                    
+                    results.append({
+                        'company': company_name,
+                        'forecast_date': date_cell,
+                        'hope_price': hope_price,
+                        'underwriter': underwriter
+                    })
+                except:
+                    continue
+        
+        return results
+    except:
+        return []
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_ipo_calendar(year, month):
+    """IPOStock IPO캘린더 스크래핑"""
     try:
         url = f'http://www.ipostock.co.kr/sub03/ipo06.asp?thisYear={year}&thisMonth={month}'
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(url, headers=headers, timeout=15)
         response.encoding = 'euc-kr'
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
         events = []
-        # 캘린더 테이블에서 이벤트 추출
+        # 캘린더에서 링크 찾기
         links = soup.find_all('a', href=True)
         
         for link in links:
             href = link.get('href', '')
             if '/view_pg/view_04.asp' in href:
-                title = link.get('title', link.text.strip())
-                # 날짜는 부모 요소에서 추출 시도
-                parent = link.find_parent('td')
-                if parent:
-                    # 이벤트 유형 추정 (색상 또는 위치 기반)
+                title = link.get('title', '') or link.get_text(strip=True)
+                if title:
+                    # 부모 td에서 날짜 추출 시도
+                    parent_td = link.find_parent('td')
+                    day = ''
+                    if parent_td:
+                        # 같은 행에서 날짜 찾기
+                        prev_b = parent_td.find_previous('b')
+                        if prev_b:
+                            day_text = prev_b.get_text(strip=True)
+                            if day_text.isdigit():
+                                day = day_text
+                    
                     events.append({
                         'company': title,
-                        'link': f"http://www.ipostock.co.kr{href}" if href.startswith('/') else href
+                        'day': day,
+                        'month': month,
+                        'year': year
                     })
         
         return events
-    except Exception as e:
+    except:
         return []
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_ipo_schedule_38():
-    """38커뮤니케이션에서 IPO 일정 스크래핑"""
+def fetch_ipo_approval_list():
+    """IPOStock 예비심사승인 목록 스크래핑"""
     try:
-        schedules = {
-            'subscription': [],  # 청약일정
-            'listing': [],      # 상장일정
-            'forecast': [],     # 수요예측
-            'approval': []      # 승인종목
-        }
-        
-        # 공모주 청약일정
-        url = 'http://www.38.co.kr/html/fund/index.htm?o=k'
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        url = 'http://www.ipostock.co.kr/sub02/exa03.asp'
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(url, headers=headers, timeout=15)
         response.encoding = 'euc-kr'
+        
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 테이블 파싱
-        tables = soup.find_all('table')
-        for table in tables:
-            rows = table.find_all('tr')
-            for row in rows:
-                cells = row.find_all('td')
-                if len(cells) >= 5:
-                    try:
-                        company_cell = cells[0]
-                        company_link = company_cell.find('a')
-                        if company_link:
-                            company = company_link.text.strip()
-                            # 날짜와 가격 정보 추출
-                            date_text = cells[1].text.strip() if len(cells) > 1 else ''
-                            price_text = cells[2].text.strip() if len(cells) > 2 else ''
-                            
-                            if company and '스팩' not in company:  # SPAC 제외 옵션
-                                schedules['subscription'].append({
-                                    'company': company,
-                                    'date': date_text,
-                                    'price': price_text,
-                                    'type': '청약'
-                                })
-                    except:
+        results = []
+        rows = soup.find_all('tr')
+        
+        for row in rows:
+            cells = row.find_all('td')
+            if len(cells) >= 5:
+                try:
+                    # 승인일
+                    approval_date = cells[0].get_text(strip=True)
+                    if not approval_date or '/' not in approval_date:
                         continue
-        
-        # 신규상장 일정
-        url2 = 'http://www.38.co.kr/html/fund/index.htm?o=nw'
-        response2 = requests.get(url2, headers=headers, timeout=15)
-        response2.encoding = 'euc-kr'
-        soup2 = BeautifulSoup(response2.text, 'html.parser')
-        
-        tables2 = soup2.find_all('table')
-        for table in tables2:
-            rows = table.find_all('tr')
-            for row in rows:
-                cells = row.find_all('td')
-                if len(cells) >= 3:
-                    try:
-                        company_cell = cells[0]
-                        company_link = company_cell.find('a')
-                        if company_link:
-                            company = company_link.text.strip()
-                            date_text = cells[1].text.strip() if len(cells) > 1 else ''
-                            
-                            if company:
-                                schedules['listing'].append({
-                                    'company': company,
-                                    'date': date_text,
-                                    'type': '상장'
-                                })
-                    except:
+                    
+                    # 종목명
+                    company_cell = cells[1]
+                    company_link = company_cell.find('a')
+                    company_name = company_link.get_text(strip=True) if company_link else company_cell.get_text(strip=True)
+                    
+                    if not company_name:
                         continue
+                    
+                    # 청구일
+                    request_date = cells[2].get_text(strip=True) if len(cells) > 2 else ''
+                    
+                    # 주간사
+                    underwriter = cells[3].get_text(strip=True) if len(cells) > 3 else ''
+                    
+                    # 시장
+                    market = cells[4].get_text(strip=True) if len(cells) > 4 else ''
+                    
+                    results.append({
+                        'approval_date': approval_date,
+                        'company': company_name,
+                        'request_date': request_date,
+                        'underwriter': underwriter,
+                        'market': market
+                    })
+                except:
+                    continue
         
-        # 수요예측 일정
-        url3 = 'http://www.38.co.kr/html/fund/index.htm?o=r'
-        response3 = requests.get(url3, headers=headers, timeout=15)
-        response3.encoding = 'euc-kr'
-        soup3 = BeautifulSoup(response3.text, 'html.parser')
-        
-        tables3 = soup3.find_all('table')
-        for table in tables3:
-            rows = table.find_all('tr')
-            for row in rows:
-                cells = row.find_all('td')
-                if len(cells) >= 3:
-                    try:
-                        company_cell = cells[0]
-                        company_link = company_cell.find('a')
-                        if company_link:
-                            company = company_link.text.strip()
-                            date_text = cells[1].text.strip() if len(cells) > 1 else ''
-                            
-                            if company:
-                                schedules['forecast'].append({
-                                    'company': company,
-                                    'date': date_text,
-                                    'type': '수요예측'
-                                })
-                    except:
-                        continue
-        
-        return schedules
-    except Exception as e:
-        return {'subscription': [], 'listing': [], 'forecast': [], 'approval': []}
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def fetch_approved_companies():
-    """승인 종목 리스트 가져오기"""
-    try:
-        url = 'http://www.38.co.kr/html/ipo/ipo.htm?key=1'
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, timeout=15)
-        response.encoding = 'euc-kr'
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        companies = []
-        tables = soup.find_all('table')
-        
-        for table in tables:
-            rows = table.find_all('tr')
-            for row in rows:
-                cells = row.find_all('td')
-                if len(cells) >= 8:
-                    try:
-                        date_text = cells[0].text.strip()
-                        company_link = cells[1].find('a')
-                        if company_link and date_text:
-                            company = company_link.text.strip()
-                            request_date = cells[2].text.strip()
-                            capital = cells[3].text.strip()
-                            revenue = cells[4].text.strip()
-                            profit = cells[5].text.strip()
-                            underwriter = cells[6].text.strip()
-                            industry = cells[7].text.strip()
-                            
-                            companies.append({
-                                'approval_date': date_text,
-                                'company': company,
-                                'request_date': request_date,
-                                'capital': capital,
-                                'revenue': revenue,
-                                'profit': profit,
-                                'underwriter': underwriter,
-                                'industry': industry
-                            })
-                    except:
-                        continue
-        
-        return companies
-    except Exception as e:
+        return results
+    except:
         return []
 
 # =============================================================================
@@ -369,7 +381,7 @@ def get_corp_code_list():
             
             return pd.DataFrame(corp_list)
         return None
-    except Exception as e:
+    except:
         return None
 
 def get_financial_statement(corp_code, bsns_year, reprt_code='11011'):
@@ -400,7 +412,6 @@ def extract_financial_data(df):
     if df is None or df.empty:
         return result
     
-    # 이익잉여금
     for kw in ['이익잉여금', '이익(손실)잉여금']:
         match = df[df['account_nm'].str.contains(kw, na=False)]
         if not match.empty:
@@ -413,7 +424,6 @@ def extract_financial_data(df):
             except:
                 pass
     
-    # 자본총계
     for kw in ['자본총계', '자본 총계']:
         match = df[df['account_nm'].str.contains(kw, na=False)]
         if not match.empty:
@@ -426,7 +436,6 @@ def extract_financial_data(df):
             except:
                 pass
     
-    # 매출액
     for kw in ['매출액', '수익(매출액)', '영업수익']:
         match = df[df['account_nm'].str.contains(kw, na=False)]
         if not match.empty:
@@ -461,14 +470,12 @@ def calculate_lp_score(df):
     if len(df) == 0:
         return df
     
-    # 이익잉여금 스코어
     if df['retained_earnings'].max() > df['retained_earnings'].min():
         df['re_score'] = (df['retained_earnings'] - df['retained_earnings'].min()) / \
                          (df['retained_earnings'].max() - df['retained_earnings'].min()) * 100
     else:
         df['re_score'] = 50
     
-    # 자본총계 스코어
     df['total_equity'] = df['total_equity'].fillna(0)
     if df['total_equity'].max() > df['total_equity'].min():
         df['equity_score'] = (df['total_equity'] - df['total_equity'].min()) / \
@@ -541,14 +548,18 @@ def main():
     with st.sidebar:
         st.markdown("## ⚙️ 설정")
         
+        st.markdown("### 📅 IPO 캘린더")
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+        
+        ipo_year = st.selectbox("연도", list(range(current_year-1, current_year+3)), 
+                                index=list(range(current_year-1, current_year+3)).index(current_year))
+        ipo_month = st.selectbox("월", list(range(1, 13)), index=current_month - 1)
+        
         st.markdown("### 📊 LP 조회")
         bsns_year = st.selectbox("사업연도", ['2024', '2023', '2022'], index=0)
         min_re = st.number_input("최소 이익잉여금 (억원)", 0, 10000, 300, 100)
         batch_size = st.selectbox("배치 크기", [30, 50, 100], index=1)
-        
-        st.markdown("### 📅 IPO 캘린더")
-        ipo_year = st.selectbox("연도", [2025, 2024], index=0)
-        ipo_month = st.selectbox("월", list(range(1, 13)), index=datetime.now().month - 1)
         
         st.markdown("---")
         
@@ -562,58 +573,61 @@ def main():
         st.markdown(f"""
         ### 📋 현재 상태
         - **LP 후보:** {len(st.session_state.financial_data)}개
-        - **버전:** v2.2
+        - **데이터:** IPOStock
+        - **버전:** v2.3
         """)
     
     # 메인 헤더
     st.markdown(f"""
     <div class="main-header">
-        <h1>🏢 LP & IPO 모니터링 대시보드 v2.2</h1>
-        <p>📅 {datetime.now().strftime('%Y년 %m월 %d일')} | 인프라프론티어자산운용(주) | IPO 펀드 + LP 발굴</p>
+        <h1>🏢 LP & IPO 모니터링 대시보드 v2.3</h1>
+        <p>📅 {datetime.now().strftime('%Y년 %m월 %d일')} | 인프라프론티어자산운용(주) | IPOStock 데이터</p>
     </div>
     """, unsafe_allow_html=True)
     
     # 탭
     tab1, tab2, tab3, tab4 = st.tabs([
-        "📅 IPO 캘린더", "🔍 LP 발굴", "🌱 ESG 모니터링", "📋 데이터"
+        "📅 IPO 일정", "🔍 LP 발굴", "🌱 ESG 모니터링", "📋 데이터"
     ])
     
     # =========================================================================
-    # TAB 1: IPO 캘린더
+    # TAB 1: IPO 일정
     # =========================================================================
     with tab1:
-        st.markdown("## 📅 IPO 일정 캘린더")
-        st.caption("38커뮤니케이션 / IPOStock 데이터 기반")
+        st.markdown("## 📅 IPO 일정")
+        st.caption(f"📖 데이터 출처: IPOStock (ipostock.co.kr) | 조회: {ipo_year}년 {ipo_month}월")
         
-        # IPO 데이터 로드
+        # 데이터 로드
         with st.spinner("IPO 일정 불러오는 중..."):
-            ipo_schedules = fetch_ipo_schedule_38()
-            approved = fetch_approved_companies()
+            subscription_data = fetch_ipo_subscription_schedule()
+            forecast_data = fetch_ipo_forecast_schedule()
+            calendar_data = fetch_ipo_calendar(ipo_year, ipo_month)
+            approval_data = fetch_ipo_approval_list()
         
-        # 요약 메트릭
+        # 메트릭
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-title">청약 예정</div>
-                <div class="metric-value" style="color:#e74c3c">{len(ipo_schedules['subscription'])}건</div>
+                <div class="metric-title">청약 일정</div>
+                <div class="metric-value" style="color:#e74c3c">{len(subscription_data)}건</div>
             </div>
             """, unsafe_allow_html=True)
         
         with col2:
             st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-title">상장 예정</div>
-                <div class="metric-value" style="color:#27ae60">{len(ipo_schedules['listing'])}건</div>
+                <div class="metric-title">수요예측</div>
+                <div class="metric-value" style="color:#9b59b6">{len(forecast_data)}건</div>
             </div>
             """, unsafe_allow_html=True)
         
         with col3:
             st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-title">수요예측</div>
-                <div class="metric-value" style="color:#9b59b6">{len(ipo_schedules['forecast'])}건</div>
+                <div class="metric-title">{ipo_month}월 일정</div>
+                <div class="metric-value" style="color:#3498db">{len(calendar_data)}건</div>
             </div>
             """, unsafe_allow_html=True)
         
@@ -621,107 +635,132 @@ def main():
             st.markdown(f"""
             <div class="metric-card">
                 <div class="metric-title">승인 종목</div>
-                <div class="metric-value" style="color:#f39c12">{len(approved)}건</div>
+                <div class="metric-value" style="color:#f39c12">{len(approval_data)}건</div>
             </div>
             """, unsafe_allow_html=True)
         
         st.markdown("---")
         
-        # 탭 내 서브탭
+        # 서브탭
         sub1, sub2, sub3, sub4 = st.tabs([
-            "📝 청약 일정", "📈 상장 일정", "🎯 수요예측", "✅ 승인 종목"
+            "📝 청약 일정", "🎯 수요예측", f"📆 {ipo_month}월 캘린더", "✅ 승인 종목"
         ])
         
+        # 청약 일정
         with sub1:
             st.markdown("### 📝 공모주 청약 일정")
+            st.caption("진행 중 및 예정된 청약 일정")
             
-            if ipo_schedules['subscription']:
-                for item in ipo_schedules['subscription'][:20]:
+            if subscription_data:
+                for item in subscription_data[:25]:
+                    competition = item.get('competition', '-')
+                    is_ongoing = '진행중' if competition == '-' else ''
+                    
                     st.markdown(f"""
                     <div class="ipo-card">
                         <div class="ipo-name">
-                            <span class="status-badge badge-subscription">청약</span> {item['company']}
+                            <span class="status-badge badge-subscription">청약</span>
+                            {item['company']} {f'<span style="color:#e74c3c; font-size:0.8rem;">({is_ongoing})</span>' if is_ongoing else ''}
                         </div>
                         <div class="ipo-detail">
-                            📅 청약일: <span class="ipo-date">{item.get('date', '-')}</span> | 
-                            💰 공모가: <span class="ipo-price">{item.get('price', '-')}</span>
+                            📅 청약일: <span class="ipo-date">{item['subscription_date']}</span><br>
+                            💰 공모가: <span class="ipo-price">{item['offer_price']}</span> (희망: {item['hope_price']})<br>
+                            📊 공모금액: {item['offer_amount']} | 경쟁률: {competition}<br>
+                            🏢 주간사: {item['underwriter']} | 상장일: {item['listing_date']}
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
             else:
-                st.info("현재 예정된 청약 일정이 없습니다.")
+                st.info("현재 청약 일정 데이터가 없습니다.")
         
+        # 수요예측
         with sub2:
-            st.markdown("### 📈 신규 상장 일정")
-            
-            if ipo_schedules['listing']:
-                for item in ipo_schedules['listing'][:20]:
-                    st.markdown(f"""
-                    <div class="ipo-card">
-                        <div class="ipo-name">
-                            <span class="status-badge badge-listing">상장</span> {item['company']}
-                        </div>
-                        <div class="ipo-detail">
-                            📅 상장일: <span class="ipo-date">{item.get('date', '-')}</span>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-            else:
-                st.info("현재 예정된 상장 일정이 없습니다.")
-        
-        with sub3:
             st.markdown("### 🎯 수요예측 일정")
             st.caption("기관투자자 대상 수요예측 - IPO 펀드 투자 검토 시점")
             
-            if ipo_schedules['forecast']:
-                for item in ipo_schedules['forecast'][:20]:
+            if forecast_data:
+                for item in forecast_data[:20]:
                     st.markdown(f"""
                     <div class="ipo-card">
                         <div class="ipo-name">
-                            <span class="status-badge badge-forecast">수요예측</span> {item['company']}
+                            <span class="status-badge badge-forecast">수요예측</span>
+                            {item['company']}
                         </div>
                         <div class="ipo-detail">
-                            📅 수요예측일: <span class="ipo-date">{item.get('date', '-')}</span>
+                            📅 수요예측일: <span class="ipo-date">{item['forecast_date']}</span><br>
+                            💰 희망공모가: {item['hope_price']}<br>
+                            🏢 주간사: {item['underwriter']}
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
             else:
-                st.info("현재 예정된 수요예측 일정이 없습니다.")
+                st.info("현재 수요예측 일정 데이터가 없습니다.")
         
-        with sub4:
-            st.markdown("### ✅ 상장 승인 종목")
-            st.caption("상장예비심사 승인 완료 - 향후 IPO 진행 예정")
+        # 캘린더
+        with sub3:
+            st.markdown(f"### 📆 {ipo_year}년 {ipo_month}월 IPO 캘린더")
             
-            if approved:
-                # 테이블 형태로 표시
-                df_approved = pd.DataFrame(approved[:30])
-                if not df_approved.empty:
-                    st.dataframe(
-                        df_approved.rename(columns={
-                            'approval_date': '승인일',
-                            'company': '기업명',
-                            'request_date': '청구일',
-                            'capital': '자본금(백만)',
-                            'revenue': '매출액(백만)',
-                            'profit': '당기순이익(백만)',
-                            'underwriter': '주간사',
-                            'industry': '업종'
-                        }),
-                        use_container_width=True,
-                        height=400
-                    )
+            if calendar_data:
+                # 종목별로 그룹화
+                companies = {}
+                for event in calendar_data:
+                    name = event['company']
+                    if name not in companies:
+                        companies[name] = []
+                    companies[name].append(event)
+                
+                for company, events in companies.items():
+                    st.markdown(f"""
+                    <div class="ipo-card">
+                        <div class="ipo-name">{company}</div>
+                        <div class="ipo-detail">
+                            {ipo_year}년 {ipo_month}월 일정 등록됨
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown(f"""
+                <div class="info-box">
+                    <strong>💡 Tip:</strong> 상세 일정은 
+                    <a href="http://www.ipostock.co.kr/sub03/ipo06.asp?thisYear={ipo_year}&thisMonth={ipo_month}" target="_blank" style="color:#3498db;">
+                    IPOStock 캘린더</a>에서 확인하세요.
+                </div>
+                """, unsafe_allow_html=True)
             else:
-                st.info("승인 종목 정보를 불러올 수 없습니다.")
+                st.info(f"{ipo_year}년 {ipo_month}월에 예정된 IPO 일정이 없습니다.")
         
-        # IPO 펀드 운용자 팁
+        # 승인 종목
+        with sub4:
+            st.markdown("### ✅ 상장예비심사 승인 종목")
+            st.caption("승인 완료 - 향후 IPO 진행 예정")
+            
+            if approval_data:
+                for item in approval_data[:20]:
+                    st.markdown(f"""
+                    <div class="ipo-card">
+                        <div class="ipo-name">
+                            <span class="status-badge badge-approval">승인</span>
+                            {item['company']}
+                        </div>
+                        <div class="ipo-detail">
+                            📅 승인일: <span class="ipo-date">{item['approval_date']}</span><br>
+                            📝 청구일: {item['request_date']}<br>
+                            🏢 주간사: {item['underwriter']} | 시장: {item['market']}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("승인 종목 데이터가 없습니다.")
+        
+        # IPO 펀드 가이드
         st.markdown("---")
         st.markdown("""
         <div class="info-box">
             <strong>💡 IPO 펀드 운용 가이드</strong><br>
-            • <strong>수요예측 2주 전:</strong> IR 자료 검토, 밸류에이션 분석 시작<br>
+            • <strong>수요예측 2주 전:</strong> IR 자료 검토, 밸류에이션 분석<br>
             • <strong>수요예측 기간:</strong> 기관투자자 참여 결정, 희망가격 제출<br>
             • <strong>청약일:</strong> 일반 청약 진행 (균등/비례 배정)<br>
-            • <strong>상장일:</strong> 시초가 형성, 단기 트레이딩 또는 장기 보유 결정
+            • <strong>상장일:</strong> 시초가 형성, 매도/보유 결정
         </div>
         """, unsafe_allow_html=True)
     
@@ -731,7 +770,6 @@ def main():
     with tab2:
         st.markdown("## 🔍 Potential LP 발굴")
         
-        # 기업 목록 로드
         if st.session_state.corp_list is None:
             st.markdown("""
             <div class="info-box">
@@ -930,7 +968,7 @@ def main():
     
     # 푸터
     st.markdown("---")
-    st.markdown('<div style="text-align:center;color:#666;padding:0.5rem;">🏢 LP & IPO 모니터링 대시보드 v2.2 | 인프라프론티어자산운용(주)</div>', unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center;color:#666;padding:0.5rem;">🏢 LP & IPO 모니터링 대시보드 v2.3 | 인프라프론티어자산운용(주) | IPOStock 데이터</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
