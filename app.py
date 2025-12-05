@@ -141,9 +141,14 @@ def fetch_ipo_subscription_schedule():
         url = 'http://www.ipostock.co.kr/sub03/ipo04.asp'
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(url, headers=headers, timeout=15)
-        response.encoding = 'euc-kr'
         
-        soup = BeautifulSoup(response.text, 'html.parser')
+        # 인코딩 처리
+        try:
+            content = response.content.decode('euc-kr', errors='ignore')
+        except:
+            content = response.content.decode('cp949', errors='ignore')
+        
+        soup = BeautifulSoup(content, 'html.parser')
         
         results = []
         # 테이블 행 찾기
@@ -211,9 +216,14 @@ def fetch_ipo_forecast_schedule():
         url = 'http://www.ipostock.co.kr/sub03/ipo02.asp'
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(url, headers=headers, timeout=15)
-        response.encoding = 'euc-kr'
         
-        soup = BeautifulSoup(response.text, 'html.parser')
+        # 인코딩 처리
+        try:
+            content = response.content.decode('euc-kr', errors='ignore')
+        except:
+            content = response.content.decode('cp949', errors='ignore')
+        
+        soup = BeautifulSoup(content, 'html.parser')
         
         results = []
         rows = soup.find_all('tr')
@@ -259,9 +269,14 @@ def fetch_ipo_calendar(year, month):
         url = f'http://www.ipostock.co.kr/sub03/ipo06.asp?thisYear={year}&thisMonth={month}'
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(url, headers=headers, timeout=15)
-        response.encoding = 'euc-kr'
         
-        soup = BeautifulSoup(response.text, 'html.parser')
+        # 인코딩 처리
+        try:
+            content = response.content.decode('euc-kr', errors='ignore')
+        except:
+            content = response.content.decode('cp949', errors='ignore')
+        
+        soup = BeautifulSoup(content, 'html.parser')
         
         events = []
         # 캘린더에서 링크 찾기
@@ -301,9 +316,14 @@ def fetch_ipo_approval_list():
         url = 'http://www.ipostock.co.kr/sub02/exa03.asp'
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(url, headers=headers, timeout=15)
-        response.encoding = 'euc-kr'
         
-        soup = BeautifulSoup(response.text, 'html.parser')
+        # 인코딩 처리
+        try:
+            content = response.content.decode('euc-kr', errors='ignore')
+        except:
+            content = response.content.decode('cp949', errors='ignore')
+        
+        soup = BeautifulSoup(content, 'html.parser')
         
         results = []
         rows = soup.find_all('tr')
