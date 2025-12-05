@@ -268,7 +268,7 @@ def fetch_all_retained_earnings(corp_df, bsns_year='2023', _progress_callback=No
         stock_code = row['stock_code']
         
         # API 호출 제한 고려 (초당 1회)
-        time.sleep(0.5)
+        time.sleep(0.12)
         
         # 진행률 업데이트
         if _progress_callback:
